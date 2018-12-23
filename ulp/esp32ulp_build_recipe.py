@@ -16,12 +16,15 @@
 #   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #   DEALINGS IN THE SOFTWARE.
 
-
+from __future__ import print_function
 import os
 import sys
 import glob
 import argparse
 import subprocess
+import fnmatch
+import platform
+
 
 CPREPROCESSOR_FLAGS = []
 
@@ -65,7 +68,7 @@ def main(argv):
     parser.add_argument('-p', action='store')
     parser.add_argument('-I', action='append')
     args, options = parser.parse_known_args()
-    
+    print("\nULP CoProcessor Assembly Script")
     for item in args.I:
         CPREPROCESSOR_FLAGS.append('-I')
         CPREPROCESSOR_FLAGS.append(item)
@@ -82,17 +85,37 @@ def main(argv):
     ulp_files = glob.glob('*.s')
     
     if not ulp_files:
-        print "No ULP Assembly File(s) Detected..."
+        print("No ULP Assembly File(s) Detected...")
         with open('ulp_main.ld',"w") as fld:
             fld.close()
     else:
+        print("- Using bpath {} : ".format(bpath))
+        print("- Using ppath {} : ".format(ppath))
+        print("- Using ulp_files : {}".format(ulp_files))
+        print("- Using board_options : {}".format(board_options))
+        sys.stdout.flush()
         build_ulp(bpath, ppath, ulp_files, board_options)
-
+        
+    print("ULP CoProcessor Assembly Done")
+    sys.stdout.flush()
     sys.exit(0)
 
+def run_command(command):
+    print(command[0])
+    sys.stdout.flush()
+    proc = subprocess.Popen(command[1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    (out, err) = proc.communicate()
+    if err:
+        error_string = command[0] + '\n' + out.decode() + '\n' + err.decode()
+        sys.exit(error_string)
+    else:
+        #console_string += cmd[0] + '\n'
+        pass
+    return out
 
 def build_ulp(build_path, platform_path, ulp_sfiles, board_options):
-    print 'ULP Assembly File(s) Detected: ' + ', '.join(ulp_sfiles)
+    print('ULP Assembly File(s) Detected: ' + ', '.join(ulp_sfiles))
+    sys.stdout.flush()
     console_string = ''
     cmds = gen_cmds(os.path.join(platform_path, 'tools'))
     
@@ -102,100 +125,44 @@ def build_ulp(build_path, platform_path, ulp_sfiles, board_options):
         
         ## Run each assembly file (foo.S) through C preprocessor
         cmd = gen_xtensa_preprocessor_cmd(build_path, platform_path, file, board_options)
-        proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,shell=False)
-        (out, err) = proc.communicate()
-        if err:
-            error_string = cmd[0] + '\n' + out
-            sys.exit(error_string)
-        else:
-            console_string += cmd[0] + '\n'
+        run_command(cmd)
         
         ## Run preprocessed assembly sources through assembler
         cmd = gen_binutils_as_cmd(build_path, platform_path, file, board_options)
-        proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-        (out, err) = proc.communicate()
-        if err:
-            error_string = cmd[0] + '\n' + err
-            sys.exit(error_string)
-        else:
-            console_string += cmd[0] + '\n'
+        run_command(cmd)
 
     ## Run linker script template through C preprocessor
     cmd = gen_xtensa_ld_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0] + '\n'
-    
+    run_command(cmd)
+
     ## Link object files into an output ELF file
     cmd = gen_binutils_ld_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0] + '\n'
+    run_command(cmd)
 
     ## Generate list of global symbols
     cmd = gen_binutils_nm_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        file_names_constant = gen_file_names_constant()
-        with open(file_names_constant['sym'],"w") as fsym:
-            fsym.write(out)
-        console_string += cmd[0] + '\n'
-    
-    
+    out = run_command(cmd)
+    file_names_constant = gen_file_names_constant()
+    with open(file_names_constant['sym'],"w") as fsym:
+        fsym.write(out.decode())
+     
     ## Create LD export script and header file
     cmd = gen_mapgen_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0] + '\n'
-    
+    run_command(cmd)
+
     ## Add the generated binary to the list of binary files
     cmd = gen_binutils_objcopy_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0] + '\n'
+    run_command(cmd)
 
     ## Add the generated binary to the list of binary files
     cmd = gen_xtensa_objcopy_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0] + '\n'
-    
+    run_command(cmd)
+
     ## embed into arduino.ar
     cmd = gen_XTENSA_AR_cmd(build_path, platform_path, ulp_sfiles, board_options)
-    proc = subprocess.Popen(cmd[1],stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
-    (out, err) = proc.communicate()
-    if err:
-        error_string = cmd[0] + '\n' + out
-        sys.exit(error_string)
-    else:
-        console_string += cmd[0]
+    run_command(cmd)
 
-    print console_string
-    
+
     return 0
 
 def gen_xtensa_preprocessor_cmd(build_path, platform_path, file, board_options):
@@ -368,15 +335,38 @@ def gen_file_names_constant():
 
 def gen_cmds(path):
     cmds = dict();
-    cmds['XTENSA_GCC']    = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-gcc')
-    cmds['XTENSA_OBJCPY'] = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-objcopy')
-    cmds['XTENSA_AR']     = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-ar')
-    cmds['ULP_AS']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-as')
-    cmds['ULP_LD']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-ld')
-    cmds['ULP_NM']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-nm')
-    cmds['ULP_OBJCPY']    = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-objcopy')
-    cmds['ULP_MAPGEN']    = os.path.join(path, 'sdk','include','ulp','esp32ulp_mapgen.py')
+    if 0:
+        cmds['XTENSA_GCC']    = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-gcc')
+        cmds['XTENSA_OBJCPY'] = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-objcopy')
+        cmds['XTENSA_AR']     = os.path.join(path, 'xtensa-esp32-elf','bin','xtensa-esp32-elf-ar')
+        cmds['ULP_AS']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-as')
+        cmds['ULP_LD']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-ld')
+        cmds['ULP_NM']        = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-nm')
+        cmds['ULP_OBJCPY']    = os.path.join(path, 'esp32ulp-elf-binutils','bin','esp32ulp-elf-objcopy')
+        cmds['ULP_MAPGEN']    = os.path.join(path, 'sdk','include','ulp','esp32ulp_mapgen.py')
+    else:
+        cmds['XTENSA_GCC']    = search_tool('xtensa-esp32-elf-gcc', path)
+        cmds['XTENSA_OBJCPY'] = search_tool('xtensa-esp32-elf-objcopy', path)
+        cmds['XTENSA_AR']     = search_tool('xtensa-esp32-elf-ar', path)
+        cmds['ULP_AS']        = search_tool('esp32ulp-elf-as', path)
+        cmds['ULP_LD']        = search_tool('esp32ulp-elf-ld', path)
+        cmds['ULP_NM']        = search_tool('esp32ulp-elf-nm', path)
+        cmds['ULP_OBJCPY']    = search_tool('esp32ulp-elf-objcopy', path)
+        cmds['ULP_MAPGEN']    = search_tool('esp32ulp_mapgen.py', path)
     return cmds
+
+def search_tool(tool, search_path):
+    if platform.system() == 'Windows':
+        extension = os.path.splitext(tool)[1]
+        if extension == "":
+            tool += ".exe"
+    while os.path.basename(search_path) != "packages":
+        for root, dirnames, filenames in os.walk(search_path):
+            for tool in fnmatch.filter(filenames, tool):
+                return os.path.join(root, tool)
+        search_path = os.path.abspath(os.path.join(search_path, os.pardir))
+    return None
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
